@@ -605,6 +605,7 @@ class T5LayerCrossAttention(nn.Module):
         use_cache=False,
         query_length=None,
         output_attentions=False,
+        without_residual=False,
     ):
         normed_hidden_states = self.layer_norm(hidden_states)
         attention_output = self.EncDecAttention(
@@ -618,6 +619,9 @@ class T5LayerCrossAttention(nn.Module):
             query_length=query_length,
             output_attentions=output_attentions,
         )
+        if without_residual:
+            return (self.dropout(attention_output[0]),) + attention_output[1:]
+
         layer_output = hidden_states + self.dropout(attention_output[0])
         outputs = (layer_output,) + attention_output[1:]  # add attentions if we output them
         return outputs
@@ -839,6 +843,12 @@ class T5Stack(T5PreTrainedModel):
         self.embed_tokens = embed_tokens
         self.is_decoder = config.is_decoder
 
+        if self.is_decoder:
+            # (n_positions of t5-small = 512, hid_dim)
+            num_latents = config.n_positions
+            self.latents = nn.Parameter(torch.randn(num_latents, config.d_model))
+            self.latent_cross = T5LayerCrossAttention(config)
+
         self.block = nn.ModuleList(
             [T5Block(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
         )
@@ -982,6 +992,10 @@ class T5Stack(T5PreTrainedModel):
 
         hidden_states = self.dropout(inputs_embeds)
 
+        # Prepare latents (n, d) -> (b, n, d)
+        latents = self.latents.unsqueeze(0).repeat(hidden_states.shape[0], 1, 1)
+        assert self.gradient_checkpointing == False, "Latents are not compatible with gradient_checkpointing"
+
         for i, (layer_module, past_key_value) in enumerate(zip(self.block, past_key_values)):
             layer_head_mask = head_mask[i]
             cross_attn_layer_head_mask = cross_attn_head_mask[i]
@@ -1032,6 +1046,14 @@ class T5Stack(T5PreTrainedModel):
                     None,  # past_key_value is always None with gradient checkpointing
                 )
             else:
+                if self.is_decoder and encoder_hidden_states is not None:
+                    cross_latents = self.latent_cross(
+                        hidden_states=latents,
+                        key_value_states=encoder_hidden_states,
+                    )
+                    latents = latents + cross_latents
+                    encoder_hidden_states = encoder_hidden_states + cross_latents
+
                 layer_outputs = layer_module(
                     hidden_states,
                     attention_mask=extended_attention_mask,
@@ -1470,7 +1492,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         self.model_dim = config.d_model
 
         self.shared = nn.Embedding(config.vocab_size, config.d_model)
-
+        
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
         encoder_config.use_cache = False
