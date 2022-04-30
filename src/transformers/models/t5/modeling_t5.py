@@ -992,8 +992,9 @@ class T5Stack(T5PreTrainedModel):
 
         hidden_states = self.dropout(inputs_embeds)
 
-        # Prepare latents (n, d) -> (b, n, d)
-        latents = self.latents.unsqueeze(0).repeat(hidden_states.shape[0], 1, 1)
+        if self.is_decoder and encoder_hidden_states is not None:
+            # Prepare latents (n, d) -> (b, n, d)
+            latents = self.latents.unsqueeze(0).repeat(hidden_states.shape[0], 1, 1)
         assert self.gradient_checkpointing == False, "Latents are not compatible with gradient_checkpointing"
 
         for i, (layer_module, past_key_value) in enumerate(zip(self.block, past_key_values)):
