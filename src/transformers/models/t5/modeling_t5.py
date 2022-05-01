@@ -845,7 +845,7 @@ class T5Stack(T5PreTrainedModel):
 
         if self.is_decoder:
             # (n_positions of t5-small = 512, hid_dim)
-            num_latents = config.n_positions * 2
+            num_latents = config.n_positions
             self.latents = nn.Parameter(torch.randn(num_latents, config.d_model))
             self.latent_cross = T5LayerCrossAttention(config)
 
