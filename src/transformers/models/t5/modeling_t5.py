@@ -843,7 +843,7 @@ class T5Stack(T5PreTrainedModel):
         self.embed_tokens = embed_tokens
         self.is_decoder = config.is_decoder
 
-        if self.is_decoder:
+        if self.is_decoder and config.persister:
             # (n_positions of t5-small = 512, hid_dim)
             num_latents = config.n_positions
             self.latents = nn.Parameter(torch.randn(num_latents, config.d_model))
@@ -992,10 +992,10 @@ class T5Stack(T5PreTrainedModel):
 
         hidden_states = self.dropout(inputs_embeds)
 
-        if self.is_decoder and encoder_hidden_states is not None:
+        if self.is_decoder and encoder_hidden_states is not None and self.config.persister:
             # Prepare latents (n, d) -> (b, n, d)
             latents = self.latents.unsqueeze(0).repeat(hidden_states.shape[0], 1, 1)
-        assert self.gradient_checkpointing == False, "Latents are not compatible with gradient_checkpointing"
+            assert self.gradient_checkpointing == False, "Latents are not compatible with gradient_checkpointing"
 
         for i, (layer_module, past_key_value) in enumerate(zip(self.block, past_key_values)):
             layer_head_mask = head_mask[i]
@@ -1047,7 +1047,7 @@ class T5Stack(T5PreTrainedModel):
                     None,  # past_key_value is always None with gradient checkpointing
                 )
             else:
-                if self.is_decoder and encoder_hidden_states is not None:
+                if self.is_decoder and encoder_hidden_states is not None and self.config.persister:
                     cross_latents = self.latent_cross(
                         hidden_states=latents,
                         key_value_states=encoder_hidden_states,
