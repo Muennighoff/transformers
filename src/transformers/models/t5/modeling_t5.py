@@ -850,6 +850,10 @@ class T5Stack(T5PreTrainedModel):
             #num_latents = config.n_positions
             #self.latents = nn.Parameter(torch.randn(num_latents, config.d_model))
             self.latent_cross = T5LayerCrossAttention(config)
+            self.latent_cross_latent_ff = T5LayerFF(config)
+            #self.latent_cross_hidden_ff = T5LayerFF(config)
+            self.latent_self = T5LayerSelfAttention(config, has_relative_attention_bias=False)
+            self.latent_self_ff = T5LayerFF(config)
 
         self.block = nn.ModuleList(
             [T5Block(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
@@ -1116,11 +1120,20 @@ class T5Stack(T5PreTrainedModel):
             # As our latents become the queries all of them are used, but some of the keys (hidden_states) won't be used
             cross_latents = self.latent_cross(
                 hidden_states=latents,
-                key_value_states=hidden_states,
-                attention_mask=extended_attention_mask,
+                key_value_states=torch.cat((latents, hidden_states), dim=1),
+                attention_mask=torch.cat((torch.ones_like(extended_attention_mask), extended_attention_mask), dim=3),
             )
-            latents = latents + cross_latents[0]
-            hidden_states = hidden_states + cross_latents[0]
+            latents = cross_latents[0] + latents
+            #hidden_states = cross_latents[0] + hidden_states
+
+            # Residuals are contained in the modules
+            latents = self.latent_cross_latent_ff(latents)
+            #hidden_states = self.latent_cross_hidden_ff(hidden_states)
+
+            latents = self.latent_self(latents)[0]
+            latents = self.latent_self_ff(latents)
+
+            hidden_states = latents.clone()
 
         # Add last layer
         if output_hidden_states:
