@@ -842,8 +842,10 @@ class T5Stack(T5PreTrainedModel):
 
         self.embed_tokens = embed_tokens
         self.is_decoder = config.is_decoder
+        self.is_encoder = not(self.is_decoder)
 
-        if self.is_decoder and config.persister:
+        #if self.is_decoder and config.persister:
+        if self.is_encoder and config.persister:
             # (n_positions of t5-small = 512, hid_dim)
             #num_latents = config.n_positions
             #self.latents = nn.Parameter(torch.randn(num_latents, config.d_model))
@@ -993,17 +995,18 @@ class T5Stack(T5PreTrainedModel):
 
         hidden_states = self.dropout(inputs_embeds)
 
-        if self.is_decoder and encoder_hidden_states is not None and self.config.persister:
-            assert self.gradient_checkpointing == False, "Latents are not compatible with gradient_checkpointing"
+        #if self.is_decoder and encoder_hidden_states is not None and self.config.persister:
+        #    assert self.gradient_checkpointing == False, "Latents are not compatible with gradient_checkpointing"
             # Prepare latents (n, d) -> (b, n, d)
+        # 
             #latents = self.latents.unsqueeze(0).repeat(hidden_states.shape[0], 1, 1)
-            assert latents is not None, "Expected latents"
-            cross_latents = self.latent_cross(
-                hidden_states=latents,
-                key_value_states=encoder_hidden_states,
-            )
-            latents = latents + cross_latents[0]
-            encoder_hidden_states = encoder_hidden_states + cross_latents[0]
+        #    assert latents is not None, "Expected latents"
+        #    cross_latents = self.latent_cross(
+        #        hidden_states=latents,
+        #        key_value_states=encoder_hidden_states,
+        #    )
+        #    latents = latents + cross_latents[0]
+        #    encoder_hidden_states = encoder_hidden_states + cross_latents[0]
 
 
         for i, (layer_module, past_key_value) in enumerate(zip(self.block, past_key_values)):
@@ -1102,7 +1105,22 @@ class T5Stack(T5PreTrainedModel):
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.dropout(hidden_states)
 
-        
+        if self.is_encoder and self.config.persister:
+            assert self.gradient_checkpointing == False, "Latents are not compatible with gradient_checkpointing"
+            assert latents is not None, "Expected latents"
+            # Pay attention to all latents but not padded hidden states
+            # In Cross-Attention, we always let all queries attend to all keys & the keys are padded away
+            # I.e. our scores matrix is of shape (bs, heads, q_seq_len, k_seq_len)
+            # & we pad using a matrix of shape (bs, 1, 1, k_seq_len) (extended_attention_mask = attention_mask[:, None, None, :])
+            # hence the final keys are padded away for a queries
+            # As our latents become the queries all of them are used, but some of the keys (hidden_states) won't be used
+            cross_latents = self.latent_cross(
+                hidden_states=latents,
+                key_value_states=hidden_states,
+                attention_mask=extended_attention_mask,
+            )
+            latents = latents + cross_latents[0]
+            hidden_states = hidden_states + cross_latents[0]
 
         # Add last layer
         if output_hidden_states:
@@ -1628,7 +1646,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         # Encode if needed (training, first prediction pass)
         if encoder_outputs is None:
             # Convert encoder inputs in embeddings if needed
-            encoder_outputs, _ = self.encoder(
+            encoder_outputs, latents = self.encoder(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 inputs_embeds=inputs_embeds,
@@ -1636,6 +1654,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
+                latents=latents,
             )
         elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
             encoder_outputs = BaseModelOutput(
@@ -1665,7 +1684,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
                 decoder_attention_mask = decoder_attention_mask.to(self.decoder.first_device)
 
         # Decode
-        decoder_outputs, latents = self.decoder(
+        decoder_outputs, _ = self.decoder(
             input_ids=decoder_input_ids,
             attention_mask=decoder_attention_mask,
             inputs_embeds=decoder_inputs_embeds,
@@ -1678,7 +1697,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            latents=latents
+            latents=None,
         )
 
         sequence_output = decoder_outputs[0]
@@ -1716,7 +1735,8 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
             encoder_last_hidden_state=encoder_outputs.last_hidden_state,
             encoder_hidden_states=encoder_outputs.hidden_states,
             encoder_attentions=encoder_outputs.attentions,
-        ), latents
+            latents=latents,
+        )
 
     def prepare_inputs_for_generation(
         self,

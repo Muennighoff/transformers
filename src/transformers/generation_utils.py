@@ -1615,7 +1615,6 @@ class GenerationMixin:
         >>> tokenizer.batch_decode(outputs, skip_special_tokens=True)
         ["It might be possible to get a better understanding of the nature of the problem, but it's not"]
         ```"""
-        print("GRDY INP", input_ids.shape)
         # init values
         logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
         stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
@@ -1665,15 +1664,8 @@ class GenerationMixin:
                 # did all peers finish? the reduced sum will be 0.0 then
                 if this_peer_finished_flag.item() == 0.0:
                     break
-
-
-            
             # prepare model inputs
             model_inputs = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
-            
-            print("Model Inputs: ", model_inputs)
-            
-
             # forward pass to get next token
             outputs = self(
                 **model_inputs,

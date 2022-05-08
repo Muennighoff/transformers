@@ -174,8 +174,11 @@ class Seq2SeqTrainer(Trainer):
         else:
             generation_inputs = inputs[self.model.main_input_name]
 
+        gen_kwargs["encoder_outputs"] = self.model.get_encoder_outputs(inputs.get("input_ids"), inputs.get("attention_mask"))
+
         generated_tokens = self.model.generate(
             generation_inputs,
+            use_cache=False,
             **gen_kwargs,
         )
         # in case the batch is shorter than max length, the output should be padded
