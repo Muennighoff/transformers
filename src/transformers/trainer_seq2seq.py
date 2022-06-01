@@ -174,7 +174,7 @@ class Seq2SeqTrainer(Trainer):
         else:
             generation_inputs = inputs[self.model.main_input_name]
 
-        gen_kwargs["encoder_outputs"] = self.model.get_encoder_outputs(inputs.get("input_ids"), inputs.get("attention_mask"))
+        gen_kwargs["encoder_outputs"], gen_kwargs["latents"] = self.model.get_encoder_outputs(inputs.get("input_ids"), inputs.get("attention_mask"))
 
         generated_tokens = self.model.generate(
             generation_inputs,

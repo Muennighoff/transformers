@@ -630,7 +630,15 @@ class T5LayerCrossAttention(nn.Module):
 class T5Block(nn.Module):
     def __init__(self, config, has_relative_attention_bias=False):
         super().__init__()
+        self.config = config
         self.is_decoder = config.is_decoder
+
+        if self.is_decoder and config.persister:
+            self.xattn_gate = torch.nn.Parameter(torch.tensor([0.]))
+            self.xattn = T5LayerCrossAttention(config)
+            self.xff_gate = torch.nn.Parameter(torch.tensor([0.]))
+            self.xff = T5LayerFF(config)
+
         self.layer = nn.ModuleList()
         self.layer.append(T5LayerSelfAttention(config, has_relative_attention_bias=has_relative_attention_bias))
         if self.is_decoder:
@@ -652,6 +660,7 @@ class T5Block(nn.Module):
         use_cache=False,
         output_attentions=False,
         return_dict=True,
+        latents=None
     ):
 
         if past_key_value is not None:
@@ -670,6 +679,25 @@ class T5Block(nn.Module):
             cross_attn_past_key_value = past_key_value[2:]
         else:
             self_attn_past_key_value, cross_attn_past_key_value = None, None
+        
+        if self.is_decoder and self.config.persister:
+            # hidden_states: (bs, seq_len, dim)
+            # latents: (bs, num_latents, dim)
+            # attn matrix: (bs, seq_len, num_latents) (ignoring heads)
+            # As the num_latents have no future information & no padding we don't need a mask
+            hidden_states = self.xattn(
+                hidden_states,
+                key_value_states=latents,
+                attention_mask=None,
+                position_bias=None, # Autocreate new pos biases
+                layer_head_mask=None, 
+                past_key_value=None, 
+                query_length=None, # We don't provide past key values
+                use_cache=False,
+                output_attentions=False,
+            )[0] * self.xattn_gate.tanh() + hidden_states
+
+            hidden_states = self.xff(hidden_states) * self.xff_gate.tanh() + hidden_states
 
         self_attention_outputs = self.layer[0](
             hidden_states,
@@ -1076,6 +1104,7 @@ class T5Stack(T5PreTrainedModel):
                     past_key_value=past_key_value,
                     use_cache=use_cache,
                     output_attentions=output_attentions,
+                    latents=latents
                 )
 
             # layer_outputs is a tuple with:
@@ -1133,7 +1162,7 @@ class T5Stack(T5PreTrainedModel):
             latents = self.latent_self(latents)[0]
             latents = self.latent_self_ff(latents)
 
-            hidden_states = latents.clone()
+            #hidden_states = latents.clone()
 
         # Add last layer
         if output_hidden_states:
@@ -1710,7 +1739,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            latents=None,
+            latents=latents,
         )
 
         sequence_output = decoder_outputs[0]
@@ -1761,6 +1790,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         cross_attn_head_mask=None,
         use_cache=None,
         encoder_outputs=None,
+        latents=None,
         **kwargs
     ):
 
@@ -1777,6 +1807,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
             "decoder_head_mask": decoder_head_mask,
             "cross_attn_head_mask": cross_attn_head_mask,
             "use_cache": use_cache,
+            "latents": latents,
         }
 
     def prepare_decoder_input_ids_from_labels(self, labels: torch.Tensor):
