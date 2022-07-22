@@ -586,14 +586,23 @@ class BloomModel(BloomPreTrainedModel):
     def get_input_embeddings(self):
         return self.word_embeddings
 
-    def _prepare_attn_mask(self, attention_mask, input_shape, inputs_embeds, past_key_values_length):
+    def _prepare_attn_mask(self, 
+            attention_mask, 
+            input_shape, 
+            inputs_embeds, 
+            past_key_values_length,
+            causal_mask=None,
+        ):
         # create causal mask
         # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
         combined_attention_mask = None
-        if input_shape[-1] > 1:
-            combined_attention_mask = _make_causal_mask(
-                input_shape, inputs_embeds.dtype, past_key_values_length=past_key_values_length
-            ).to(attention_mask.device)
+        if causal_mask is None:
+            if input_shape[-1] > 1:
+                combined_attention_mask = _make_causal_mask(
+                    input_shape, inputs_embeds.dtype, past_key_values_length=past_key_values_length
+                ).to(attention_mask.device)
+        else:
+            combined_attention_mask = causal_mask.to(attention_mask.device)
 
         if attention_mask is not None:
             # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
@@ -618,6 +627,7 @@ class BloomModel(BloomPreTrainedModel):
         input_ids=None,
         past_key_values=None,
         attention_mask=None,
+        causal_mask=None,
         position_ids=None,
         head_mask=None,
         inputs_embeds=None,
@@ -677,7 +687,7 @@ class BloomModel(BloomPreTrainedModel):
 
         alibi = build_alibi_tensor(attention_mask, self.n_head, hidden_states.dtype, hidden_states.device)
 
-        causal_mask = self._prepare_attn_mask(attention_mask, input_shape, inputs_embeds, past_key_values_length)
+        causal_mask = self._prepare_attn_mask(attention_mask, input_shape, inputs_embeds, past_key_values_length, causal_mask=causal_mask)
 
         for i, (block, layer_past) in enumerate(zip(self.h, past_key_values)):
 
@@ -802,6 +812,7 @@ class BloomForCausalLM(BloomPreTrainedModel):
         input_ids=None,
         past_key_values=None,
         attention_mask=None,
+        causal_mask=None,
         position_ids=None,
         head_mask=None,
         inputs_embeds=None,
@@ -823,6 +834,7 @@ class BloomForCausalLM(BloomPreTrainedModel):
             input_ids,
             past_key_values=past_key_values,
             attention_mask=attention_mask,
+            causal_mask=causal_mask,
             position_ids=position_ids,
             head_mask=head_mask,
             inputs_embeds=inputs_embeds,
