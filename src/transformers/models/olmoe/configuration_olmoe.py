@@ -12,17 +12,14 @@
 """OLMoE model configuration"""
 
 from ...configuration_utils import PretrainedConfig
-from ...utils import logging
-
-
-logger = logging.get_logger(__name__)
+from ...modeling_rope_utils import rope_config_validation
 
 
 class OlmoeConfig(PretrainedConfig):
     r"""
     This is the configuration class to store the configuration of a [`OlmoeModel`]. It is used to instantiate an OLMoE
     model according to the specified arguments, defining the model architecture. Instantiating a configuration with the
-    defaults will yield a similar configuration to that of the [allenai/OLMoE-7B-A1B](https://huggingface.co/allenai/OLMoE-7B-A1B).
+    defaults will yield a similar configuration to that of the [allenai/OLMoE-1B-7B-0824](https://huggingface.co/allenai/OLMoE-1B-7B-0824).
 
     Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
     documentation from [`PretrainedConfig`] for more information.
@@ -54,6 +51,8 @@ class OlmoeConfig(PretrainedConfig):
             The maximum sequence length that this model might ever be used with.
         initializer_range (`float`, *optional*, defaults to 0.02):
             The standard deviation of the truncated_normal_initializer for initializing all weight matrices.
+        rms_norm_eps (`float`, *optional*, defaults to 1e-05):
+            The epsilon used by the rms normalization layers.
         use_cache (`bool`, *optional*, defaults to `True`):
             Whether or not the model should return the last key/values attentions (not used by all models). Only
             relevant if `config.is_decoder=True`.
@@ -89,7 +88,7 @@ class OlmoeConfig(PretrainedConfig):
         output_router_logits (`bool`, *optional*, defaults to `False`):
             Whether or not the router logits should be returned by the model. Enabeling this will also
             allow the model to output the auxiliary loss, including load balancing loss and router z-loss.
-        router_aux_loss_coef (`float`, *optional*, defaults to 0.001):
+        router_aux_loss_coef (`float`, *optional*, defaults to 0.01):
             The aux loss factor for the total loss.
         norm_topk_prob (`bool`, *optional*, defaults to `False`):
             Whether to normalize the topk probabilities.
@@ -121,6 +120,7 @@ class OlmoeConfig(PretrainedConfig):
         hidden_act="silu",
         max_position_embeddings=4096,
         initializer_range=0.02,
+        rms_norm_eps=1e-05,
         use_cache=True,
         pad_token_id=1,
         bos_token_id=None,
@@ -134,7 +134,7 @@ class OlmoeConfig(PretrainedConfig):
         num_experts_per_tok=8,
         num_experts=64,
         output_router_logits=False,
-        router_aux_loss_coef=0.001,
+        router_aux_loss_coef=0.01,
         norm_topk_prob=False,
         **kwargs,
     ):
@@ -152,10 +152,10 @@ class OlmoeConfig(PretrainedConfig):
         self.num_key_value_heads = num_key_value_heads
         self.hidden_act = hidden_act
         self.initializer_range = initializer_range
+        self.rms_norm_eps = rms_norm_eps
         self.use_cache = use_cache
         self.rope_theta = rope_theta
         self.rope_scaling = rope_scaling
-        self._rope_scaling_validation()
         self.attention_bias = attention_bias
         self.attention_dropout = attention_dropout
         self.clip_qkv = clip_qkv
@@ -164,6 +164,11 @@ class OlmoeConfig(PretrainedConfig):
         self.output_router_logits = output_router_logits
         self.router_aux_loss_coef = router_aux_loss_coef
         self.norm_topk_prob = norm_topk_prob
+        # Validate the correctness of rotary position embeddings parameters
+        # BC: if there is a 'type' field, move it to 'rope_type'.
+        if self.rope_scaling is not None and "type" in self.rope_scaling:
+            self.rope_scaling["rope_type"] = self.rope_scaling["type"]
+        rope_config_validation(self)
 
         super().__init__(
             pad_token_id=pad_token_id,
@@ -172,23 +177,3 @@ class OlmoeConfig(PretrainedConfig):
             tie_word_embeddings=tie_word_embeddings,
             **kwargs,
         )
-
-    def _rope_scaling_validation(self):
-        """
-        Validate the `rope_scaling` configuration.
-        """
-        if self.rope_scaling is None:
-            return
-
-        if not isinstance(self.rope_scaling, dict) or len(self.rope_scaling) != 2:
-            raise ValueError(
-                "`rope_scaling` must be a dictionary with two fields, `type` and `factor`, " f"got {self.rope_scaling}"
-            )
-        rope_scaling_type = self.rope_scaling.get("type", None)
-        rope_scaling_factor = self.rope_scaling.get("factor", None)
-        if rope_scaling_type is None or rope_scaling_type not in ["linear", "dynamic"]:
-            raise ValueError(
-                f"`rope_scaling`'s type field must be one of ['linear', 'dynamic'], got {rope_scaling_type}"
-            )
-        if rope_scaling_factor is None or not isinstance(rope_scaling_factor, float) or rope_scaling_factor <= 1.0:
-            raise ValueError(f"`rope_scaling`'s factor field must be a float > 1, got {rope_scaling_factor}")
