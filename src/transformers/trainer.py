@@ -2545,7 +2545,7 @@ class Trainer:
                         else contextlib.nullcontext
                     )
                     with context():
-                        tr_loss_step = self.training_step(model, inputs, num_items_in_batch)
+                        tr_loss_step = self.training_step(model, inputs, num_items_in_batch, args=args, do_sync_step=do_sync_step)
 
                     if (
                         args.logging_nan_inf_filter
@@ -2596,7 +2596,8 @@ class Trainer:
                             else:
                                 grad_norm = _grad_norm
 
-                        self.control = self.callback_handler.on_pre_optimizer_step(args, self.state, self.control)
+                        if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
+                            self.control = self.callback_handler.on_pre_optimizer_step(args, self.state, self.control)
 
                         self.optimizer.step()
 
@@ -3708,7 +3709,7 @@ class Trainer:
         return ctx_manager
 
     def training_step(
-        self, model: nn.Module, inputs: dict[str, Union[torch.Tensor, Any]], num_items_in_batch=None
+        self, model: nn.Module, inputs: dict[str, Union[torch.Tensor, Any]], num_items_in_batch=None, args=None, do_sync_step: bool = False
     ) -> torch.Tensor:
         """
         Perform a training step on a batch of inputs.
@@ -3784,6 +3785,11 @@ class Trainer:
             # https://github.com/huggingface/transformers/pull/35808
             if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
                 kwargs["scale_wrt_gas"] = False
+
+            # Need to sync before the backward as the backward also performs optimizer.step
+            # https://github.com/huggingface/accelerate/issues/2951
+            if do_sync_step and self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+                self.control = self.callback_handler.on_pre_optimizer_step(args, self.state, self.control)
 
             self.accelerator.backward(loss, **kwargs)
 
